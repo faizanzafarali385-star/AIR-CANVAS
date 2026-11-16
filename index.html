@@ -1,0 +1,2562 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Air Canvas Pro: Horizon Spatial Studio</title>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+    <style>
+        :root {
+            --primary: #00f3ff;
+            --primary-glow: rgba(0, 243, 255, 0.4);
+            --accent: #bc13fe;
+            --accent-glow: rgba(188, 19, 254, 0.4);
+            --danger: #ff3344;
+            --danger-glow: rgba(255, 51, 68, 0.4);
+            --success: #33ff77;
+            --success-glow: rgba(51, 255, 119, 0.4);
+            --warn: #ffaa00;
+            --panel-bg: rgba(7, 14, 24, 0.82);
+            --panel-border: rgba(0, 243, 255, 0.25);
+            --font-ui: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            --font-mono: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #02060b;
+            font-family: var(--font-ui);
+            color: #e6f1ff;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* --- BACKGROUND MODES --- */
+        #bg-canvas {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            background: radial-gradient(circle at 50% 50%, #08182b 0%, #030810 70%, #010307 100%);
+            transition: background 0.5s ease;
+        }
+
+        #input-video {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            opacity: 0.35;
+            filter: contrast(1.15) brightness(0.8);
+            z-index: 1;
+            transition: opacity 0.4s ease, filter 0.4s ease;
+        }
+
+        body.studio-mode #input-video {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* PiP Mini Webcam */
+        #webcam-pip {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 160px;
+            height: 100px;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid var(--panel-border);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+            z-index: 40;
+            background: #000;
+            display: none;
+            opacity: 0;
+            transform: scale(0.9);
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        body.studio-mode #webcam-pip {
+            display: block;
+            opacity: 0.85;
+            transform: scale(1);
+        }
+
+        #webcam-pip:hover {
+            opacity: 1;
+            transform: scale(1.05);
+            border-color: var(--primary);
+        }
+
+        #webcam-pip video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        #skeleton-canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none;
+            transform: scaleX(-1);
+        }
+
+        #scanlines {
+            position: fixed;
+            inset: 0;
+            background: linear-gradient(to bottom, rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0.3) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 3;
+            opacity: 0.18;
+        }
+
+        #canvas-layer {
+            position: absolute;
+            inset: 0;
+            z-index: 4;
+            cursor: crosshair;
+        }
+
+        /* --- UI DOCKS --- */
+        #ui-layer {
+            position: absolute;
+            inset: 0;
+            z-index: 10;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 16px 20px;
+        }
+
+        .dock {
+            pointer-events: auto;
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 14px;
+            backdrop-filter: blur(20px) saturate(140%);
+            -webkit-backdrop-filter: blur(20px) saturate(140%);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(0, 243, 255, 0.05);
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .dock.dimmed {
+            opacity: 0.35;
+        }
+
+        .dock:hover {
+            opacity: 1 !important;
+            border-color: rgba(0, 243, 255, 0.5);
+            box-shadow: 0 12px 45px rgba(0, 0, 0, 0.7), 0 0 25px rgba(0, 243, 255, 0.15);
+        }
+
+        /* --- TOP BAR --- */
+        #top-bar {
+            align-self: center;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 8px 18px;
+            border-radius: 40px;
+            animation: slideDown 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .brand-logo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 800;
+            font-size: 0.95rem;
+            letter-spacing: 2px;
+            color: var(--primary);
+            text-shadow: 0 0 12px var(--primary-glow);
+        }
+
+        .brand-tag {
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: rgba(0, 243, 255, 0.15);
+            border: 1px solid rgba(0, 243, 255, 0.3);
+            color: #fff;
+            letter-spacing: 1px;
+            font-family: var(--font-mono);
+        }
+
+        /* Segmented Mode Control */
+        .mode-segmented {
+            display: flex;
+            background: rgba(2, 8, 16, 0.6);
+            border: 1px solid rgba(0, 243, 255, 0.15);
+            border-radius: 30px;
+            padding: 3px;
+            gap: 2px;
+        }
+
+        .mode-tab {
+            padding: 6px 15px;
+            border-radius: 20px;
+            font-size: 0.76rem;
+            font-weight: 600;
+            letter-spacing: 0.8px;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: #8da4be;
+            transition: all 0.25s ease;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .mode-tab:hover { color: #fff; }
+
+        .mode-tab.active {
+            background: var(--primary);
+            color: #03070d;
+            box-shadow: 0 0 18px var(--primary-glow);
+            font-weight: 700;
+        }
+
+        .mode-tab.danger.active {
+            background: var(--danger);
+            color: #fff;
+            box-shadow: 0 0 18px var(--danger-glow);
+        }
+
+        .mode-tab.accent.active {
+            background: var(--accent);
+            color: #fff;
+            box-shadow: 0 0 18px var(--accent-glow);
+        }
+
+        /* Top Action Buttons (Symmetry, Turntable) */
+        .top-action-btn {
+            background: rgba(4, 14, 25, 0.6);
+            border: 1px solid rgba(0, 243, 255, 0.2);
+            color: #b3cde8;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-family: var(--font-mono);
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .top-action-btn:hover {
+            border-color: var(--primary);
+            color: #fff;
+            background: rgba(0, 243, 255, 0.15);
+        }
+
+        .top-action-btn.active {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        /* Header Info Pills */
+        .info-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.74rem;
+            font-family: var(--font-mono);
+            color: #9cb3ce;
+            padding: 4px 12px;
+            background: rgba(0, 0, 0, 0.35);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .indicator-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--warn);
+            box-shadow: 0 0 8px currentColor;
+            transition: background 0.3s;
+        }
+
+        .indicator-dot.online {
+            background: var(--success);
+            color: var(--success);
+        }
+
+        /* --- FLOATING LEFT TOOLBOX --- */
+        #left-toolbox {
+            position: absolute;
+            top: 50%;
+            left: 20px;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 9px;
+            padding: 12px;
+            border-radius: 16px;
+        }
+
+        .tool-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            border: 1px solid rgba(0, 243, 255, 0.2);
+            background: rgba(4, 12, 22, 0.75);
+            color: #c0d8f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            position: relative;
+            font-size: 1.05rem;
+        }
+
+        .tool-btn:hover {
+            background: rgba(0, 243, 255, 0.15);
+            border-color: var(--primary);
+            color: var(--primary);
+            transform: scale(1.08);
+            box-shadow: 0 0 15px rgba(0, 243, 255, 0.25);
+        }
+
+        .tool-btn:active { transform: scale(0.95); }
+
+        .tool-btn.active {
+            background: var(--primary);
+            color: #03070d;
+            box-shadow: 0 0 20px var(--primary-glow);
+            border-color: var(--primary);
+        }
+
+        .tool-btn.danger:hover {
+            background: rgba(255, 51, 68, 0.2);
+            border-color: var(--danger);
+            color: var(--danger);
+            box-shadow: 0 0 15px var(--danger-glow);
+        }
+
+        .tool-btn[data-tip]::after {
+            content: attr(data-tip);
+            position: absolute;
+            left: calc(100% + 12px);
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(3, 10, 18, 0.95);
+            color: #e6f1ff;
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 0.72rem;
+            font-family: var(--font-mono);
+            white-space: nowrap;
+            border: 1px solid var(--panel-border);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s, transform 0.2s;
+        }
+
+        .tool-btn:hover[data-tip]::after {
+            opacity: 1;
+            transform: translateY(-50%) translateX(2px);
+        }
+
+        .tool-divider {
+            width: 100%;
+            height: 1px;
+            background: rgba(0, 243, 255, 0.15);
+            margin: 2px 0;
+        }
+
+        .brush-badge {
+            position: absolute;
+            bottom: 2px;
+            right: 4px;
+            font-size: 0.6rem;
+            font-weight: 700;
+            font-family: var(--font-mono);
+        }
+
+        /* --- FLOATING RIGHT PALETTE DOCK --- */
+        #right-palette {
+            position: absolute;
+            top: 50%;
+            right: 20px;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 11px;
+            padding: 16px 12px;
+            border-radius: 30px;
+            align-items: center;
+        }
+
+        .swatch {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+            position: relative;
+        }
+
+        .swatch::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            left: 5px;
+            width: 8px;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            filter: blur(1px);
+        }
+
+        .swatch:hover {
+            transform: scale(1.22);
+            border-color: #fff;
+            box-shadow: 0 0 15px currentColor;
+        }
+
+        .swatch.active {
+            transform: scale(1.35);
+            border-color: #fff;
+            box-shadow: 0 0 25px currentColor, 0 0 45px currentColor;
+        }
+
+        .swatch.active::before {
+            content: '';
+            position: absolute;
+            inset: -6px;
+            border: 2px dashed #ffffff;
+            border-radius: 50%;
+            animation: orbitalSpin 6s linear infinite;
+        }
+
+        @keyframes orbitalSpin {
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Material FX Selector (Solid, Neon, Glass, Metal) */
+        .mat-selector {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-top: 6px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(0, 243, 255, 0.2);
+            width: 100%;
+            align-items: center;
+        }
+
+        .mat-btn {
+            width: 32px;
+            height: 24px;
+            border-radius: 6px;
+            border: 1px solid rgba(0, 243, 255, 0.2);
+            background: rgba(3, 10, 20, 0.6);
+            color: #8da4be;
+            font-size: 0.68rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .mat-btn:hover {
+            border-color: var(--primary);
+            color: #fff;
+        }
+
+        .mat-btn.active {
+            background: rgba(0, 243, 255, 0.2);
+            border-color: var(--primary);
+            color: var(--primary);
+            font-weight: bold;
+        }
+
+        /* Custom Color Picker Input */
+        .custom-color-wrapper {
+            position: relative;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px dashed var(--primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: transform 0.2s;
+            overflow: hidden;
+            background: rgba(0, 243, 255, 0.1);
+        }
+
+        .custom-color-wrapper:hover {
+            transform: scale(1.15);
+            border-color: #fff;
+        }
+
+        .custom-color-input {
+            position: absolute;
+            inset: -10px;
+            width: 60px;
+            height: 60px;
+            cursor: pointer;
+            opacity: 0;
+        }
+
+        /* --- BOTTOM CONTROL BAR --- */
+        #bottom-bar {
+            align-self: center;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            margin-bottom: 6px;
+            animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .bar-btn {
+            background: rgba(3, 12, 22, 0.65);
+            border: 1px solid rgba(0, 243, 255, 0.2);
+            color: #b0cbe8;
+            padding: 7px 13px;
+            font-size: 0.74rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            border-radius: 10px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .bar-btn:hover {
+            background: rgba(0, 243, 255, 0.15);
+            border-color: var(--primary);
+            color: #fff;
+            box-shadow: 0 0 14px rgba(0, 243, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .bar-btn.active {
+            background: var(--primary);
+            color: #03070d;
+            box-shadow: 0 0 16px var(--primary-glow);
+            border-color: var(--primary);
+        }
+
+        .bar-btn.accent {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .bar-btn.accent:hover {
+            background: var(--accent);
+            color: #fff;
+            box-shadow: 0 0 16px var(--accent-glow);
+        }
+
+        .bar-btn.danger {
+            border-color: rgba(255, 51, 68, 0.4);
+            color: #ff6677;
+        }
+
+        .bar-btn.danger:hover {
+            background: rgba(255, 51, 68, 0.25);
+            border-color: var(--danger);
+            color: #fff;
+            box-shadow: 0 0 16px var(--danger-glow);
+        }
+
+        /* --- HOLOGRAPHIC RETICLE --- */
+        #cursor-vis {
+            position: absolute;
+            width: 32px;
+            height: 32px;
+            transform: translate(-50%, -50%);
+            display: none;
+            pointer-events: none;
+            z-index: 50;
+            transition: transform 0.08s ease-out;
+        }
+
+        .reticle-ring {
+            position: absolute;
+            inset: 0;
+            border: 2px solid var(--primary);
+            border-radius: 50%;
+            box-shadow: 0 0 16px var(--primary-glow), inset 0 0 8px var(--primary-glow);
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .reticle-cross {
+            position: absolute;
+            inset: -4px;
+            pointer-events: none;
+        }
+
+        .reticle-cross::before, .reticle-cross::after {
+            content: '';
+            position: absolute;
+            background: var(--primary);
+            box-shadow: 0 0 6px var(--primary);
+        }
+
+        .reticle-cross::before {
+            top: 50%; left: 0; right: 0; height: 1px;
+            transform: translateY(-50%);
+        }
+
+        .reticle-cross::after {
+            left: 50%; top: 0; bottom: 0; width: 1px;
+            transform: translateX(-50%);
+        }
+
+        #cursor-vis.pinching .reticle-ring {
+            border-color: var(--success);
+            box-shadow: 0 0 25px var(--success-glow), inset 0 0 12px var(--success-glow);
+            transform: scale(0.75);
+            background: rgba(51, 255, 119, 0.2);
+        }
+
+        #cursor-vis.erase .reticle-ring {
+            border-color: var(--danger);
+            box-shadow: 0 0 20px var(--danger-glow), inset 0 0 8px var(--danger-glow);
+        }
+
+        #cursor-vis.pipette .reticle-ring {
+            border-color: var(--warn);
+            box-shadow: 0 0 20px rgba(255, 170, 0, 0.4);
+        }
+
+        /* UI Dwell Ring */
+        #loading-ring {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            display: none;
+            pointer-events: none;
+            z-index: 55;
+        }
+
+        .ring-circle {
+            transition: stroke-dashoffset 0.05s linear;
+            transform: rotate(-90deg);
+            transform-origin: 50% 50%;
+        }
+
+        /* --- TOAST ALERTS --- */
+        #toast {
+            position: fixed;
+            bottom: 84px;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            background: rgba(4, 15, 26, 0.95);
+            border: 1px solid var(--primary);
+            box-shadow: 0 8px 30px rgba(0, 243, 255, 0.25);
+            color: #fff;
+            padding: 8px 22px;
+            border-radius: 30px;
+            font-size: 0.8rem;
+            font-family: var(--font-mono);
+            letter-spacing: 0.5px;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 80;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* --- MODAL DIALOGS --- */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(2, 6, 12, 0.85);
+            backdrop-filter: blur(12px);
+            z-index: 100;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.3s ease;
+        }
+
+        .modal-card {
+            background: rgba(6, 16, 28, 0.95);
+            border: 1px solid var(--primary);
+            box-shadow: 0 0 60px rgba(0, 243, 255, 0.25);
+            border-radius: 18px;
+            padding: 34px 40px;
+            max-width: 660px;
+            text-align: center;
+            position: relative;
+        }
+
+        .modal-title {
+            font-size: 1.7rem;
+            font-weight: 800;
+            letter-spacing: 3px;
+            color: var(--primary);
+            margin: 0 0 8px 0;
+            text-shadow: 0 0 20px var(--primary-glow);
+        }
+
+        .modal-subtitle {
+            color: #9cb3ce;
+            font-size: 0.85rem;
+            margin-bottom: 22px;
+        }
+
+        .modal-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            text-align: left;
+            margin-bottom: 24px;
+        }
+
+        .modal-box {
+            background: rgba(0, 243, 255, 0.04);
+            border: 1px solid rgba(0, 243, 255, 0.15);
+            border-radius: 10px;
+            padding: 12px 14px;
+        }
+
+        .modal-box h4 {
+            margin: 0 0 5px 0;
+            color: var(--primary);
+            font-size: 0.8rem;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .modal-box p {
+            margin: 0;
+            font-size: 0.76rem;
+            color: #c2d6ec;
+            line-height: 1.4;
+        }
+
+        /* Template Grid Items */
+        .template-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .template-card {
+            background: rgba(4, 15, 28, 0.8);
+            border: 1px solid rgba(0, 243, 255, 0.2);
+            border-radius: 12px;
+            padding: 16px 12px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .template-card:hover {
+            background: rgba(0, 243, 255, 0.15);
+            border-color: var(--primary);
+            transform: translateY(-3px);
+            box-shadow: 0 0 20px rgba(0, 243, 255, 0.25);
+        }
+
+        .template-icon { font-size: 2rem; }
+        .template-name { font-weight: 700; font-size: 0.82rem; color: #fff; }
+        .template-desc { font-size: 0.68rem; color: #8da4be; font-family: var(--font-mono); }
+
+        .modal-close-btn {
+            position: absolute;
+            top: 16px;
+            right: 18px;
+            background: transparent;
+            border: none;
+            color: #8da4be;
+            font-size: 1.4rem;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .modal-close-btn:hover { color: #fff; }
+
+        .primary-action-btn {
+            background: var(--primary);
+            color: #03070d;
+            border: none;
+            padding: 12px 36px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 0.92rem;
+            letter-spacing: 1.5px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            box-shadow: 0 0 25px var(--primary-glow);
+        }
+
+        .primary-action-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 35px var(--primary);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="bg-canvas"></div>
+    <video id="input-video" playsinline></video>
+    <canvas id="skeleton-canvas"></canvas>
+    <div id="scanlines"></div>
+    <div id="canvas-layer"></div>
+
+    <!-- PiP Webcam -->
+    <div id="webcam-pip">
+        <video id="pip-video" playsinline muted></video>
+    </div>
+
+    <!-- TUTORIAL / INTRO MODAL -->
+    <div id="tutorial-overlay" class="modal-overlay" style="display: flex;">
+        <div class="modal-card">
+            <h1 class="modal-title">AIR CANVAS PRO</h1>
+            <div class="modal-subtitle">Horizon Spatial Studio &amp; Motion Engine</div>
+
+            <div class="modal-grid">
+                <div class="modal-box">
+                    <h4><span>👆</span> 1-HAND GESTURES</h4>
+                    <p><b>Index Aim:</b> Direct 3D cursor<br>
+                    <b>Pinch (Thumb+Index):</b> Build / Erase<br>
+                    <b>Fist:</b> Orbit / Rotate Camera</p>
+                </div>
+                <div class="modal-box">
+                    <h4><span>🙌</span> 2-HAND HYBRID</h4>
+                    <p><b>Hand 1:</b> Precision Aiming<br>
+                    <b>Hand 2 Pinch:</b> Instant trigger<br>
+                    <b>Hand 2 Fist:</b> Lock Depth</p>
+                </div>
+                <div class="modal-box">
+                    <h4><span>🪞</span> SYMMETRY &amp; TEMPLATES</h4>
+                    <p>Mirror mode (X/Z) reflects builds automatically. Preset templates spawn instant voxel creations.</p>
+                </div>
+                <div class="modal-box">
+                    <h4><span>⌨️</span> MOUSE &amp; SHORTCUTS</h4>
+                    <p><b>R-Drag:</b> Orbit | <b>Scroll:</b> Zoom<br>
+                    <b>Keys:</b> B (Build), E (Erase), C (Clear), M (Mirror), T (Turntable), I (Pipette), 1-9 (Colors)</p>
+                </div>
+            </div>
+
+            <button class="primary-action-btn" id="btn-init">ENTER STUDIO</button>
+        </div>
+    </div>
+
+    <!-- TEMPLATES LIBRARY MODAL -->
+    <div id="templates-modal" class="modal-overlay">
+        <div class="modal-card" style="max-width: 680px;">
+            <button class="modal-close-btn" id="btn-close-templates">✖</button>
+            <h2 class="modal-title" style="font-size: 1.5rem;">3D TEMPLATES LIBRARY</h2>
+            <div class="modal-subtitle">Choose a pre-made creation to spawn into your canvas</div>
+
+            <div class="template-grid">
+                <div class="template-card" data-template="spaceship">
+                    <span class="template-icon">🚀</span>
+                    <span class="template-name">Cyber Spaceship</span>
+                    <span class="template-desc">Twin-engine speeder</span>
+                </div>
+                <div class="template-card" data-template="sword">
+                    <span class="template-icon">⚔️</span>
+                    <span class="template-name">Cyber Katana</span>
+                    <span class="template-desc">Neon glowing blade</span>
+                </div>
+                <div class="template-card" data-template="tower">
+                    <span class="template-icon">🏰</span>
+                    <span class="template-name">Castle Watchtower</span>
+                    <span class="template-desc">Crenelated citadel</span>
+                </div>
+                <div class="template-card" data-template="tree">
+                    <span class="template-icon">🌲</span>
+                    <span class="template-name">Bonsai Tree</span>
+                    <span class="template-desc">Tiered voxel foliage</span>
+                </div>
+                <div class="template-card" data-template="pyramid">
+                    <span class="template-icon">🏛️</span>
+                    <span class="template-name">Step Pyramid</span>
+                    <span class="template-desc">Ancient monument</span>
+                </div>
+                <div class="template-card" data-template="heart">
+                    <span class="template-icon">❤️</span>
+                    <span class="template-name">Pixel Heart</span>
+                    <span class="template-desc">3D voxel sculpture</span>
+                </div>
+            </div>
+
+            <button class="top-action-btn" style="margin: 0 auto;" id="btn-cancel-templates">Cancel</button>
+        </div>
+    </div>
+
+    <!-- CLEAR CANVAS CONFIRMATION MODAL -->
+    <div id="clear-modal" class="modal-overlay">
+        <div class="modal-card" style="max-width: 440px;">
+            <button class="modal-close-btn" id="btn-close-clear">✖</button>
+            <div style="font-size: 2.2rem; margin-bottom: 8px;">🗑️</div>
+            <h2 class="modal-title" style="font-size: 1.4rem; color: var(--danger); text-shadow: 0 0 20px var(--danger-glow);">CLEAR CANVAS</h2>
+            <div class="modal-subtitle" style="margin-bottom: 22px;">Are you sure you want to clear all blocks from the canvas?<br>You can undo this action with <b>Undo (Z)</b>.</div>
+            <div style="display: flex; gap: 12px; justify-content: center;">
+                <button class="primary-action-btn" id="btn-confirm-clear" style="background: var(--danger); box-shadow: 0 0 20px var(--danger-glow); color: #fff;">Clear All</button>
+                <button class="top-action-btn" id="btn-cancel-clear" style="padding: 10px 22px; font-size: 0.85rem; border-radius: 10px;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN UI LAYER -->
+    <div id="ui-layer">
+        <!-- TOP HUD BAR -->
+        <header id="top-bar" class="dock">
+            <div class="brand-logo">
+                <span>AIR CANVAS PRO</span>
+                <span class="brand-tag">HORIZON</span>
+            </div>
+
+            <!-- Mode Segmented Control -->
+            <div class="mode-segmented">
+                <button class="mode-tab active" id="tab-construct">
+                    <span>⚒</span> Construct
+                </button>
+                <button class="mode-tab danger" id="tab-destroy">
+                    <span>✖</span> Destroy
+                </button>
+                <button class="mode-tab accent" id="tab-orbit">
+                    <span>👁</span> Orbit View
+                </button>
+            </div>
+
+            <!-- Symmetry Toggle -->
+            <button class="top-action-btn" id="btn-mirror" title="Mirror Symmetry (M)">
+                <span>🪞</span> <span id="mirror-text">Mirror: OFF</span>
+            </button>
+
+            <!-- Auto-Rotate Turntable Toggle -->
+            <button class="top-action-btn" id="btn-turntable" title="Turntable Presentation (T)">
+                <span>🔄</span> Turntable
+            </button>
+
+            <!-- Info Pills -->
+            <div class="info-pill" id="pill-blocks" title="Voxel Count">
+                <span>🧊</span> <span id="stat-count">0</span>
+            </div>
+
+            <div class="info-pill" id="pill-bounds" title="Model Dimensions">
+                <span>📐</span> <span id="stat-bounds">0x0x0</span>
+            </div>
+
+            <div class="info-pill" id="pill-tracking" title="Hand Tracking Status">
+                <div class="indicator-dot" id="dot-tracking"></div>
+                <span id="stat-tracking">Init Camera</span>
+            </div>
+
+            <div class="info-pill" id="pill-fps" title="Framerate">
+                <span id="stat-fps">60 FPS</span>
+            </div>
+        </header>
+
+        <!-- FLOATING LEFT TOOLBOX -->
+        <aside id="left-toolbox" class="dock">
+            <button class="tool-btn" id="tool-undo" data-tip="Undo (Z)">↶</button>
+            <button class="tool-btn" id="tool-redo" data-tip="Redo (Y)">↷</button>
+            <div class="tool-divider"></div>
+            <button class="tool-btn" id="tool-brush" data-tip="Brush Size: 1x1">
+                <span>🖌</span>
+                <span class="brush-badge" id="brush-badge">1x</span>
+            </button>
+            <button class="tool-btn" id="tool-pipette" data-tip="Color Pipette / Eyedropper (I)">🧪</button>
+            <button class="tool-btn active" id="tool-grid" data-tip="Toggle Grid">▦</button>
+            <button class="tool-btn" id="tool-templates" data-tip="3D Templates Library">🏛️</button>
+            <div class="tool-divider"></div>
+            <button class="tool-btn danger" id="tool-clear" data-tip="Clear Canvas (C)">🗑</button>
+        </aside>
+
+        <!-- FLOATING RIGHT PALETTE DOCK -->
+        <aside id="right-palette" class="dock">
+            <div class="swatch active" style="background:#00f3ff" data-col="0x00f3ff" title="Cyan"></div>
+            <div class="swatch" style="background:#bc13fe" data-col="0xbc13fe" title="Purple"></div>
+            <div class="swatch" style="background:#ff0077" data-col="0xff0077" title="Neon Pink"></div>
+            <div class="swatch" style="background:#ff3344" data-col="0xff3344" title="Crimson"></div>
+            <div class="swatch" style="background:#ffaa00" data-col="0xffaa00" title="Amber Orange"></div>
+            <div class="swatch" style="background:#ffff33" data-col="0xffff33" title="Electric Yellow"></div>
+            <div class="swatch" style="background:#33ff77" data-col="0x33ff77" title="Matrix Green"></div>
+            <div class="swatch" style="background:#0077ff" data-col="0x0077ff" title="Cobalt Blue"></div>
+            <div class="swatch" style="background:#ffffff" data-col="0xffffff" title="Pure White"></div>
+            <div class="swatch" style="background:#1a2838" data-col="0x1a2838" title="Dark Obsidian"></div>
+
+            <!-- Custom Color Picker -->
+            <div class="custom-color-wrapper" title="Custom RGB Color">
+                <span>🎨</span>
+                <input type="color" class="custom-color-input" id="color-picker-input" value="#00f3ff">
+            </div>
+
+            <!-- Material FX Shaders -->
+            <div class="mat-selector" title="Voxel Material Shaders">
+                <button class="mat-btn active" data-mat="solid" title="Standard Matte">STD</button>
+                <button class="mat-btn" data-mat="neon" title="Neon Glow Emissive">GLOW</button>
+                <button class="mat-btn" data-mat="glass" title="Hologram Glass">GLAS</button>
+                <button class="mat-btn" data-mat="metal" title="Chrome Metal">METL</button>
+            </div>
+        </aside>
+
+        <!-- BOTTOM HUD BAR -->
+        <footer id="bottom-bar" class="dock">
+            <button class="bar-btn" id="btn-env-mode" title="Switch AR Camera / Dark Studio Mode">
+                <span id="env-icon">🌌</span> <span id="env-text">Studio Mode</span>
+            </button>
+            <button class="bar-btn" id="btn-env-theme" title="Atmosphere Lighting Theme">
+                <span id="theme-icon">🌃</span> Cyberpunk
+            </button>
+            <button class="bar-btn active" id="btn-skeleton" title="Toggle Hand Skeleton (H)">
+                <span>🦴</span> Skeleton: ON
+            </button>
+            <button class="bar-btn" id="btn-hand-swap" title="Primary Hand Detection">
+                <span>✋</span> Hand: Auto
+            </button>
+            <button class="bar-btn" id="btn-reset-cam" title="Reset Camera View">
+                <span>🎯</span> Reset Cam
+            </button>
+            <button class="bar-btn danger" id="btn-clear-canvas" title="Clear All Blocks (C)">
+                <span>🗑</span> Clear Canvas
+            </button>
+            <button class="bar-btn" id="btn-save" title="Save Project (JSON)">
+                <span>💾</span> Save
+            </button>
+            <button class="bar-btn" id="btn-load" title="Load Project (JSON)">
+                <span>📂</span> Load
+            </button>
+            <button class="bar-btn accent" id="btn-export-obj" title="Export 3D Model (.OBJ)">
+                <span>📦</span> Export OBJ
+            </button>
+            <button class="bar-btn" id="btn-screenshot" title="Capture High-Res Photo">
+                <span>📷</span> Photo
+            </button>
+            <button class="bar-btn" id="btn-audio" title="Audio Effects">
+                <span id="audio-icon">🔊</span>
+            </button>
+            <button class="bar-btn" id="btn-help" title="Instructions &amp; Shortcuts">
+                <span>❓</span>
+            </button>
+        </footer>
+
+        <!-- Hidden File Input for Loading -->
+        <input type="file" id="file-input" accept=".json" style="display: none;">
+
+        <!-- AIR CURSOR & DWELL PROGRESS RING -->
+        <div id="cursor-vis">
+            <div class="reticle-ring"></div>
+            <div class="reticle-cross"></div>
+        </div>
+
+        <svg id="loading-ring" width="70" height="70">
+            <circle class="ring-circle" stroke="var(--primary)" stroke-width="4.5" fill="transparent" r="28" cx="35" cy="35" />
+        </svg>
+
+        <!-- TOAST ALERTS -->
+        <div id="toast">
+            <span id="toast-icon">✨</span>
+            <span id="toast-msg">Ready</span>
+        </div>
+    </div>
+
+    <!-- MAIN APPLICATION SCRIPT -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- SYSTEM CONFIGURATION ---
+        const CFG = {
+            GRID: 40,
+            PINCH_THRESHOLD: 0.055,
+            PINCH_RELEASE: 0.08,
+            FIST_THRESHOLD: 0.13,
+            LERP_SLOW: 0.25,
+            LERP_FAST: 0.65,
+            DWELL_TIME_MS: 480,
+            PINCH_COOLDOWN_MS: 240
+        };
+
+        // --- WEB AUDIO SYNTHESIZER ---
+        const AudioSys = {
+            ctx: null,
+            muted: false,
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            },
+            play(type) {
+                if (this.muted) return;
+                this.init();
+                const t = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+
+                if (type === 'hover') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(500, t);
+                    osc.frequency.linearRampToValueAtTime(750, t + 0.035);
+                    gain.gain.setValueAtTime(0.03, t);
+                    gain.gain.linearRampToValueAtTime(0, t + 0.035);
+                    osc.start(t); osc.stop(t + 0.035);
+                } else if (type === 'place') {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(240, t);
+                    osc.frequency.exponentialRampToValueAtTime(780, t + 0.08);
+                    gain.gain.setValueAtTime(0.12, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+                    osc.start(t); osc.stop(t + 0.1);
+                } else if (type === 'delete') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(200, t);
+                    osc.frequency.linearRampToValueAtTime(50, t + 0.1);
+                    gain.gain.setValueAtTime(0.09, t);
+                    gain.gain.linearRampToValueAtTime(0, t + 0.1);
+                    osc.start(t); osc.stop(t + 0.1);
+                } else if (type === 'switch') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(400, t);
+                    osc.frequency.linearRampToValueAtTime(600, t + 0.06);
+                    gain.gain.setValueAtTime(0.06, t);
+                    gain.gain.linearRampToValueAtTime(0, t + 0.06);
+                    osc.start(t); osc.stop(t + 0.06);
+                } else if (type === 'snap') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(800, t);
+                    osc.frequency.exponentialRampToValueAtTime(1200, t + 0.04);
+                    gain.gain.setValueAtTime(0.05, t);
+                    gain.gain.linearRampToValueAtTime(0, t + 0.04);
+                    osc.start(t); osc.stop(t + 0.04);
+                }
+            }
+        };
+
+        // --- APPLICATION STATE ---
+        const State = {
+            mode: 'BUILD', // 'BUILD', 'ERASE', or 'ORBIT'
+            color: 0x00f3ff,
+            brushSize: 1, // 1 (1x1), 2 (2x2), 3 (3x3)
+            materialStyle: 'solid', // 'solid', 'neon', 'glass', 'metal'
+            mirrorMode: 'OFF', // 'OFF', 'X', 'Z'
+            isTurntable: false,
+            isPipetteActive: false,
+            themeIndex: 0,
+            
+            // Cursor smoothing
+            rawCursor: new THREE.Vector2(0.5, 0.5),
+            smoothCursor: new THREE.Vector2(0.5, 0.5),
+            snapCoord: new THREE.Vector3(0, 0, 0),
+            hasSnap: false,
+            targetVoxel: null,
+            
+            // Hand & Motion
+            primaryHandType: 'auto',
+            showSkeleton: true,
+            isStudioMode: false,
+            pinchCooldown: 0,
+            lastFistCoord: new THREE.Vector2(-1, -1),
+            
+            // UI Dwell
+            hoverBtn: null,
+            hoverTimer: 0,
+            
+            // History
+            undoStack: [],
+            redoStack: [],
+            
+            // Voxel Store: "x,y,z" -> { mesh, color, matStyle, pos }
+            voxels: new Map()
+        };
+
+        // --- SHARED GEOMETRY (Performance Optimization) ---
+        const sharedBoxGeo = new THREE.BoxGeometry(CFG.GRID, CFG.GRID, CFG.GRID);
+        const sharedEdgeGeo = new THREE.EdgesGeometry(sharedBoxGeo);
+        const sharedEdgeMat = new THREE.LineBasicMaterial({ color: 0x040e1a, linewidth: 1.5 });
+
+        // --- TOAST NOTIFICATIONS ---
+        const toastEl = document.getElementById('toast');
+        const toastMsg = document.getElementById('toast-msg');
+        let toastTimeout = null;
+        function notify(msg, icon = '✨') {
+            document.getElementById('toast-icon').textContent = icon;
+            toastMsg.textContent = msg;
+            toastEl.classList.add('show');
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => toastEl.classList.remove('show'), 2200);
+        }
+
+        // --- THREE.JS SCENE SETUP ---
+        const canvasContainer = document.getElementById('canvas-layer');
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 6000);
+        camera.position.set(0, 360, 580);
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        canvasContainer.appendChild(renderer.domElement);
+
+        // OrbitControls
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.08;
+        controls.target.set(0, 40, 0);
+        controls.mouseButtons = {
+            LEFT: THREE.MOUSE.NONE,
+            MIDDLE: THREE.MOUSE.DOLLY,
+            RIGHT: THREE.MOUSE.ROTATE
+        };
+
+        // Lighting Architecture with Atmosphere Themes
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+        scene.add(ambientLight);
+        const sunLight = new THREE.DirectionalLight(0xffffff, 1.3);
+        sunLight.position.set(350, 700, 450);
+        scene.add(sunLight);
+        const fillLight = new THREE.DirectionalLight(0x00f3ff, 0.4);
+        fillLight.position.set(-350, 200, -350);
+        scene.add(fillLight);
+
+        // Ground Grid
+        const gridHelper = new THREE.GridHelper(CFG.GRID * 32, 32, 0x00f3ff, 0x142838);
+        gridHelper.position.y = 0;
+        gridHelper.material.opacity = 0.35;
+        gridHelper.material.transparent = true;
+        scene.add(gridHelper);
+
+        const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+        // Mirror Symmetry Guide Plane
+        const mirrorGeo = new THREE.PlaneGeometry(CFG.GRID * 32, CFG.GRID * 20);
+        const mirrorMat = new THREE.MeshBasicMaterial({
+            color: 0xbc13fe,
+            transparent: true,
+            opacity: 0.15,
+            side: THREE.DoubleSide
+        });
+        const mirrorPlaneMesh = new THREE.Mesh(mirrorGeo, mirrorMat);
+        mirrorPlaneMesh.position.y = (CFG.GRID * 20) / 2;
+        mirrorPlaneMesh.rotation.y = Math.PI / 2; // Default X mirror plane at x = 0
+        mirrorPlaneMesh.visible = false;
+        scene.add(mirrorPlaneMesh);
+
+        // World Container
+        const world = new THREE.Group();
+        scene.add(world);
+
+        // Ghost Voxel Preview
+        const ghostMat = new THREE.MeshStandardMaterial({
+            color: State.color,
+            transparent: true,
+            opacity: 0.55,
+            roughness: 0.2,
+            metalness: 0.3
+        });
+        const ghostMesh = new THREE.Mesh(sharedBoxGeo, ghostMat);
+        const ghostWire = new THREE.LineSegments(
+            sharedEdgeGeo,
+            new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 })
+        );
+        ghostMesh.add(ghostWire);
+        scene.add(ghostMesh);
+
+        // Symmetrical Ghost Preview (when mirror mode is active)
+        const mirrorGhostMesh = new THREE.Mesh(sharedBoxGeo, ghostMat.clone());
+        mirrorGhostMesh.add(new THREE.LineSegments(sharedEdgeGeo, new THREE.LineBasicMaterial({ color: 0xbc13fe, linewidth: 2 })));
+        mirrorGhostMesh.visible = false;
+        scene.add(mirrorGhostMesh);
+
+        // Particle System
+        const particles = [];
+        const pGeo = new THREE.BoxGeometry(4, 4, 4);
+        function spawnFX(pos, col, count = 12) {
+            for (let i = 0; i < count; i++) {
+                const pMat = new THREE.MeshBasicMaterial({ color: col, transparent: true });
+                const m = new THREE.Mesh(pGeo, pMat);
+                m.position.copy(pos);
+                m.userData.vel = new THREE.Vector3(
+                    (Math.random() - 0.5) * 14,
+                    Math.random() * 10 + 2,
+                    (Math.random() - 0.5) * 14
+                );
+                m.userData.life = 1.0;
+                scene.add(m);
+                particles.push(m);
+            }
+        }
+
+        // --- VOXEL COORDINATE ENGINE ---
+        function getVoxelKey(x, y, z) {
+            return `${Math.round(x)},${Math.round(y)},${Math.round(z)}`;
+        }
+
+        function createVoxelMaterial(colorHex, style) {
+            if (style === 'neon') {
+                return new THREE.MeshStandardMaterial({
+                    color: colorHex,
+                    emissive: colorHex,
+                    emissiveIntensity: 0.6,
+                    roughness: 0.1,
+                    metalness: 0.2
+                });
+            } else if (style === 'glass') {
+                return new THREE.MeshPhysicalMaterial({
+                    color: colorHex,
+                    transparent: true,
+                    opacity: 0.65,
+                    roughness: 0.1,
+                    transmission: 0.7,
+                    thickness: 1.2
+                });
+            } else if (style === 'metal') {
+                return new THREE.MeshStandardMaterial({
+                    color: colorHex,
+                    roughness: 0.1,
+                    metalness: 0.95
+                });
+            } else {
+                return new THREE.MeshStandardMaterial({
+                    color: colorHex,
+                    roughness: 0.3,
+                    metalness: 0.2
+                });
+            }
+        }
+
+        function createVoxelMesh(pos, colorHex, style = State.materialStyle) {
+            const mat = createVoxelMaterial(colorHex, style);
+            const mesh = new THREE.Mesh(sharedBoxGeo, mat);
+            mesh.position.copy(pos);
+            const edge = new THREE.LineSegments(sharedEdgeGeo, sharedEdgeMat);
+            mesh.add(edge);
+            mesh.userData.isVoxel = true;
+            mesh.userData.colorHex = colorHex;
+            mesh.userData.matStyle = style;
+            mesh.userData.coord = pos.clone();
+            return mesh;
+        }
+
+        function updateVoxelMetrics() {
+            document.getElementById('stat-count').textContent = State.voxels.size;
+            if (State.voxels.size === 0) {
+                document.getElementById('stat-bounds').textContent = "0x0x0";
+                return;
+            }
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+            State.voxels.forEach(v => {
+                minX = Math.min(minX, v.pos.x); maxX = Math.max(maxX, v.pos.x);
+                minY = Math.min(minY, v.pos.y); maxY = Math.max(maxY, v.pos.y);
+                minZ = Math.min(minZ, v.pos.z); maxZ = Math.max(maxZ, v.pos.z);
+            });
+            const dx = Math.round((maxX - minX) / CFG.GRID) + 1;
+            const dy = Math.round((maxY - minY) / CFG.GRID) + 1;
+            const dz = Math.round((maxZ - minZ) / CFG.GRID) + 1;
+            document.getElementById('stat-bounds').textContent = `${dx}x${dy}x${dz}`;
+        }
+
+        // Place Single Voxel
+        function placeSingleVoxel(pos, colorHex, style = State.materialStyle) {
+            const key = getVoxelKey(pos.x, pos.y, pos.z);
+            if (State.voxels.has(key)) return null;
+
+            const mesh = createVoxelMesh(pos, colorHex, style);
+            world.add(mesh);
+            State.voxels.set(key, { mesh, color: colorHex, style, pos: pos.clone() });
+            return { key, pos: pos.clone(), color: colorHex, style };
+        }
+
+        // Place with Brush Size & Symmetry
+        function placeVoxelCluster(centerPos, colorHex, recordUndo = true) {
+            const added = [];
+            const r = State.brushSize - 1;
+
+            const targets = [centerPos.clone()];
+            if (State.mirrorMode === 'X') {
+                targets.push(new THREE.Vector3(-centerPos.x, centerPos.y, centerPos.z));
+            } else if (State.mirrorMode === 'Z') {
+                targets.push(new THREE.Vector3(centerPos.x, centerPos.y, -centerPos.z));
+            }
+
+            targets.forEach(center => {
+                for (let dx = -r; dx <= r; dx++) {
+                    for (let dz = -r; dz <= r; dz++) {
+                        const p = new THREE.Vector3(
+                            center.x + dx * CFG.GRID,
+                            center.y,
+                            center.z + dz * CFG.GRID
+                        );
+                        const item = placeSingleVoxel(p, colorHex, State.materialStyle);
+                        if (item) added.push(item);
+                    }
+                }
+            });
+
+            if (added.length > 0) {
+                spawnFX(centerPos, colorHex, 14);
+                AudioSys.play('place');
+                updateVoxelMetrics();
+
+                if (recordUndo) {
+                    State.undoStack.push({ type: 'ADD_BATCH', items: added });
+                    State.redoStack = [];
+                }
+                return true;
+            }
+            return false;
+        }
+
+        // Remove Single Voxel
+        function removeSingleVoxel(key) {
+            const entry = State.voxels.get(key);
+            if (!entry) return null;
+
+            spawnFX(entry.mesh.position, 0xff3344, 12);
+            world.remove(entry.mesh);
+            entry.mesh.material.dispose();
+            State.voxels.delete(key);
+            return { key, pos: entry.pos.clone(), color: entry.color, style: entry.style };
+        }
+
+        // Remove with Brush Size & Symmetry
+        function removeVoxelCluster(centerPos, recordUndo = true) {
+            const removed = [];
+            const r = State.brushSize - 1;
+
+            const targets = [centerPos.clone()];
+            if (State.mirrorMode === 'X') {
+                targets.push(new THREE.Vector3(-centerPos.x, centerPos.y, centerPos.z));
+            } else if (State.mirrorMode === 'Z') {
+                targets.push(new THREE.Vector3(centerPos.x, centerPos.y, -centerPos.z));
+            }
+
+            targets.forEach(center => {
+                for (let dx = -r; dx <= r; dx++) {
+                    for (let dy = -r; dy <= r; dy++) {
+                        for (let dz = -r; dz <= r; dz++) {
+                            const key = getVoxelKey(
+                                center.x + dx * CFG.GRID,
+                                center.y + dy * CFG.GRID,
+                                center.z + dz * CFG.GRID
+                            );
+                            const item = removeSingleVoxel(key);
+                            if (item) removed.push(item);
+                        }
+                    }
+                }
+            });
+
+            if (removed.length > 0) {
+                AudioSys.play('delete');
+                updateVoxelMetrics();
+
+                if (recordUndo) {
+                    State.undoStack.push({ type: 'REMOVE_BATCH', items: removed });
+                    State.redoStack = [];
+                }
+                return true;
+            }
+            return false;
+        }
+
+        // --- UNDO / REDO ---
+        function executeUndo() {
+            if (!State.undoStack.length) {
+                notify("Nothing to Undo", "ℹ️");
+                return;
+            }
+            const action = State.undoStack.pop();
+            if (action.type === 'ADD_BATCH') {
+                action.items.forEach(it => removeSingleVoxel(it.key));
+                State.redoStack.push(action);
+            } else if (action.type === 'REMOVE_BATCH') {
+                action.items.forEach(it => placeSingleVoxel(it.pos, it.color, it.style));
+                State.redoStack.push(action);
+            } else if (action.type === 'CLEAR') {
+                action.items.forEach(it => placeSingleVoxel(it.pos, it.color, it.style));
+                State.redoStack.push(action);
+            }
+            updateVoxelMetrics();
+            AudioSys.play('switch');
+            notify("Undo Applied", "↶");
+        }
+
+        function executeRedo() {
+            if (!State.redoStack.length) {
+                notify("Nothing to Redo", "ℹ️");
+                return;
+            }
+            const action = State.redoStack.pop();
+            if (action.type === 'ADD_BATCH') {
+                action.items.forEach(it => placeSingleVoxel(it.pos, it.color, it.style));
+                State.undoStack.push(action);
+            } else if (action.type === 'REMOVE_BATCH') {
+                action.items.forEach(it => removeSingleVoxel(it.key));
+                State.undoStack.push(action);
+            } else if (action.type === 'CLEAR') {
+                action.items.forEach(it => removeSingleVoxel(it.key));
+                State.undoStack.push(action);
+            }
+            updateVoxelMetrics();
+            AudioSys.play('switch');
+            notify("Redo Applied", "↷");
+        }
+
+        // --- CLEAR CANVAS ENGINE ---
+        const clearModal = document.getElementById('clear-modal');
+
+        function openClearModal() {
+            if (!State.voxels.size) {
+                notify("Canvas is already empty", "ℹ️");
+                return;
+            }
+            clearModal.style.display = 'flex';
+            AudioSys.play('switch');
+        }
+
+        function closeClearModal() {
+            clearModal.style.display = 'none';
+        }
+
+        function executeClearCanvas() {
+            if (!State.voxels.size) {
+                closeClearModal();
+                return;
+            }
+            const items = [];
+            State.voxels.forEach(v => items.push({
+                key: getVoxelKey(v.pos.x, v.pos.y, v.pos.z),
+                pos: v.pos.clone(),
+                color: v.color,
+                style: v.style
+            }));
+            State.undoStack.push({ type: 'CLEAR', items });
+            State.redoStack = [];
+
+            State.voxels.forEach(v => {
+                world.remove(v.mesh);
+                v.mesh.material.dispose();
+            });
+            State.voxels.clear();
+            updateVoxelMetrics();
+            AudioSys.play('delete');
+            notify("Canvas Cleared (Press Z to undo)", "🗑");
+            closeClearModal();
+        }
+
+        function clearAllVoxels() {
+            openClearModal();
+        }
+
+        // --- 3D TEMPLATE PROCEDURAL GENERATORS ---
+        function spawnTemplate(templateId) {
+            clearAllVoxelsWithoutConfirm();
+            const G = CFG.GRID;
+
+            if (templateId === 'spaceship') {
+                // Cockpit & Fuselage
+                for (let z = -4; z <= 3; z++) {
+                    placeSingleVoxel(new THREE.Vector3(0, G * 1.5, z * G), 0x00f3ff, 'solid');
+                    placeSingleVoxel(new THREE.Vector3(0, G * 0.5, z * G), 0x1a2838, 'metal');
+                }
+                // Wings
+                for (let x = 1; x <= 4; x++) {
+                    const z = x - 2;
+                    placeSingleVoxel(new THREE.Vector3(x * G, G * 0.5, z * G), 0xbc13fe, 'neon');
+                    placeSingleVoxel(new THREE.Vector3(-x * G, G * 0.5, z * G), 0xbc13fe, 'neon');
+                }
+                // Engines
+                placeSingleVoxel(new THREE.Vector3(G, G * 0.5, 3 * G), 0xffaa00, 'neon');
+                placeSingleVoxel(new THREE.Vector3(-G, G * 0.5, 3 * G), 0xffaa00, 'neon');
+            } else if (templateId === 'sword') {
+                // Blade
+                for (let y = 3; y <= 9; y++) {
+                    placeSingleVoxel(new THREE.Vector3(0, y * G + G/2, 0), 0x00f3ff, 'neon');
+                }
+                // Crossguard
+                for (let x = -2; x <= 2; x++) {
+                    placeSingleVoxel(new THREE.Vector3(x * G, 3 * G + G/2, 0), 0xffaa00, 'metal');
+                }
+                // Hilt & Pommel
+                placeSingleVoxel(new THREE.Vector3(0, 2 * G + G/2, 0), 0x1a2838, 'solid');
+                placeSingleVoxel(new THREE.Vector3(0, 1 * G + G/2, 0), 0x1a2838, 'solid');
+                placeSingleVoxel(new THREE.Vector3(0, 0 * G + G/2, 0), 0xbc13fe, 'neon');
+            } else if (templateId === 'tower') {
+                // Hollow Tower Base
+                for (let y = 0; y <= 6; y++) {
+                    for (let x = -2; x <= 2; x++) {
+                        for (let z = -2; z <= 2; z++) {
+                            if (Math.abs(x) === 2 || Math.abs(z) === 2) {
+                                // Door opening at bottom
+                                if (y <= 2 && z === 2 && Math.abs(x) <= 0) continue;
+                                placeSingleVoxel(new THREE.Vector3(x * G, y * G + G/2, z * G), 0x0077ff, 'solid');
+                            }
+                        }
+                    }
+                }
+                // Battlements at top
+                for (let x = -2; x <= 2; x++) {
+                    for (let z = -2; z <= 2; z++) {
+                        if ((Math.abs(x) === 2 || Math.abs(z) === 2) && (x + z) % 2 === 0) {
+                            placeSingleVoxel(new THREE.Vector3(x * G, 7 * G + G/2, z * G), 0x00f3ff, 'neon');
+                        }
+                    }
+                }
+            } else if (templateId === 'tree') {
+                // Trunk
+                for (let y = 0; y <= 4; y++) {
+                    placeSingleVoxel(new THREE.Vector3(0, y * G + G/2, 0), 0xffaa00, 'solid');
+                }
+                // Foliage Layers
+                for (let y = 4; y <= 7; y++) {
+                    const radius = 7 - y;
+                    for (let x = -radius; x <= radius; x++) {
+                        for (let z = -radius; z <= radius; z++) {
+                            if (Math.abs(x) + Math.abs(z) <= radius + 1) {
+                                placeSingleVoxel(new THREE.Vector3(x * G, y * G + G/2, z * G), 0x33ff77, 'neon');
+                            }
+                        }
+                    }
+                }
+            } else if (templateId === 'pyramid') {
+                for (let layer = 0; layer <= 5; layer++) {
+                    const r = 5 - layer;
+                    for (let x = -r; x <= r; x++) {
+                        for (let z = -r; z <= r; z++) {
+                            placeSingleVoxel(new THREE.Vector3(x * G, layer * G + G/2, z * G), 0xffff33, 'solid');
+                        }
+                    }
+                }
+            } else if (templateId === 'heart') {
+                const shape = [
+                    [0, 1, 1, 0, 1, 1, 0],
+                    [1, 1, 1, 1, 1, 1, 1],
+                    [1, 1, 1, 1, 1, 1, 1],
+                    [0, 1, 1, 1, 1, 1, 0],
+                    [0, 0, 1, 1, 1, 0, 0],
+                    [0, 0, 0, 1, 0, 0, 0]
+                ];
+                shape.forEach((row, ri) => {
+                    const y = (shape.length - 1 - ri) + 2;
+                    row.forEach((cell, ci) => {
+                        if (cell) {
+                            const x = ci - 3;
+                            placeSingleVoxel(new THREE.Vector3(x * G, y * G + G/2, 0), 0xff0077, 'neon');
+                            placeSingleVoxel(new THREE.Vector3(x * G, y * G + G/2, G), 0xff0077, 'glass');
+                        }
+                    });
+                });
+            }
+
+            updateVoxelMetrics();
+            spawnFX(new THREE.Vector3(0, 100, 0), 0x00f3ff, 25);
+            AudioSys.play('snap');
+            notify(`Spawned Template: ${templateId.toUpperCase()}`, "✨");
+        }
+
+        function clearAllVoxelsWithoutConfirm() {
+            State.voxels.forEach(v => {
+                world.remove(v.mesh);
+                v.mesh.material.dispose();
+            });
+            State.voxels.clear();
+            State.undoStack = [];
+            State.redoStack = [];
+        }
+
+        // --- SAVE / LOAD / EXPORT OBJ / SCREENSHOT ---
+        function saveProjectJSON() {
+            const data = [];
+            State.voxels.forEach(v => {
+                data.push({ p: [v.pos.x, v.pos.y, v.pos.z], c: v.color, s: v.style });
+            });
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `air-canvas-${Date.now()}.json`;
+            a.click();
+            notify("Project Saved", "💾");
+            AudioSys.play('place');
+        }
+
+        function loadProjectJSON(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (!Array.isArray(data)) throw new Error("Invalid structure");
+                    clearAllVoxelsWithoutConfirm();
+
+                    data.forEach(item => {
+                        const pos = new THREE.Vector3(item.p[0], item.p[1], item.p[2]);
+                        placeSingleVoxel(pos, item.c, item.s || 'solid');
+                    });
+                    updateVoxelMetrics();
+                    notify(`Loaded ${data.length} Blocks`, "📂");
+                    AudioSys.play('switch');
+                } catch (err) {
+                    alert("Invalid JSON file format");
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function exportOBJ() {
+            if (!State.voxels.size) {
+                notify("Canvas is empty!", "⚠️");
+                return;
+            }
+
+            let obj = "# Air Canvas Pro: Horizon Spatial Studio 3D OBJ Export\n";
+            obj += "o AirCanvasVoxelModel\n";
+
+            let vertOffset = 1;
+            const h = CFG.GRID / 2;
+            const corners = [
+                [-h, -h, -h], [ h, -h, -h], [ h,  h, -h], [-h,  h, -h],
+                [-h, -h,  h], [ h, -h,  h], [ h,  h,  h], [-h,  h,  h]
+            ];
+            const faces = [
+                [1, 2, 3, 4], [5, 8, 7, 6], [1, 5, 6, 2],
+                [4, 3, 7, 8], [1, 4, 8, 5], [2, 6, 7, 3]
+            ];
+
+            State.voxels.forEach(v => {
+                const { x, y, z } = v.pos;
+                corners.forEach(c => {
+                    obj += `v ${(x + c[0]).toFixed(2)} ${(y + c[1]).toFixed(2)} ${(z + c[2]).toFixed(2)}\n`;
+                });
+                faces.forEach(f => {
+                    obj += `f ${f[0] + vertOffset - 1} ${f[1] + vertOffset - 1} ${f[2] + vertOffset - 1} ${f[3] + vertOffset - 1}\n`;
+                });
+                vertOffset += 8;
+            });
+
+            const blob = new Blob([obj], { type: 'text/plain' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `air-canvas-model-${Date.now()}.obj`;
+            a.click();
+            notify("3D OBJ Model Exported", "📦");
+            AudioSys.play('snap');
+        }
+
+        function takeScreenshot() {
+            ghostMesh.visible = false;
+            mirrorGhostMesh.visible = false;
+            renderer.render(scene, camera);
+            const dataUrl = renderer.domElement.toDataURL('image/png');
+            ghostMesh.visible = true;
+            if (State.mirrorMode !== 'OFF') mirrorGhostMesh.visible = true;
+
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = `air-canvas-snap-${Date.now()}.png`;
+            a.click();
+            notify("High-Res Snapshot Saved", "📷");
+            AudioSys.play('snap');
+        }
+
+        // --- RAYCASTING & SURFACE SNAPPING ---
+        const raycaster = new THREE.Raycaster();
+        const screenRay = new THREE.Vector2();
+
+        function updateRaycastSnapping(screenX, screenY) {
+            screenRay.x = (screenX * 2) - 1;
+            screenRay.y = -(screenY * 2) + 1;
+            raycaster.setFromCamera(screenRay, camera);
+
+            // 1. Raycast against existing blocks
+            const blockMeshes = [];
+            State.voxels.forEach(v => blockMeshes.push(v.mesh));
+            const hits = raycaster.intersectObjects(blockMeshes, false);
+
+            if (hits.length > 0) {
+                const hit = hits[0];
+                const hitObj = hit.object;
+
+                if (State.isPipetteActive) {
+                    // Pipette sample preview
+                    State.targetVoxel = hitObj;
+                    ghostMesh.position.copy(hitObj.position);
+                    ghostMesh.visible = true;
+                    State.hasSnap = true;
+                    return;
+                }
+
+                if (State.mode === 'ERASE') {
+                    State.snapCoord.copy(hitObj.position);
+                    ghostMesh.position.copy(hitObj.position);
+                    ghostMesh.visible = true;
+                    State.hasSnap = true;
+                    State.targetVoxel = hitObj;
+                    updateMirrorGhost(hitObj.position);
+                    return;
+                } else {
+                    // BUILD: Flush against face normal
+                    const norm = hit.face.normal.clone();
+                    const nextPos = hitObj.position.clone().add(norm.multiplyScalar(CFG.GRID));
+                    State.snapCoord.copy(nextPos);
+                    ghostMesh.position.copy(nextPos);
+                    ghostMesh.visible = true;
+                    State.hasSnap = true;
+                    State.targetVoxel = null;
+                    updateMirrorGhost(nextPos);
+                    return;
+                }
+            }
+
+            State.targetVoxel = null;
+
+            if (State.mode === 'ERASE' || State.isPipetteActive) {
+                ghostMesh.visible = false;
+                mirrorGhostMesh.visible = false;
+                State.hasSnap = false;
+                return;
+            }
+
+            // 2. Fallback to Ground Plane (y = 0)
+            const groundHit = new THREE.Vector3();
+            if (raycaster.ray.intersectPlane(groundPlane, groundHit)) {
+                const snapX = Math.floor((groundHit.x + CFG.GRID / 2) / CFG.GRID) * CFG.GRID;
+                const snapZ = Math.floor((groundHit.z + CFG.GRID / 2) / CFG.GRID) * CFG.GRID;
+                const snapY = CFG.GRID / 2;
+
+                State.snapCoord.set(snapX, snapY, snapZ);
+                ghostMesh.position.copy(State.snapCoord);
+                ghostMesh.visible = true;
+                State.hasSnap = true;
+                updateMirrorGhost(State.snapCoord);
+                return;
+            }
+
+            ghostMesh.visible = false;
+            mirrorGhostMesh.visible = false;
+            State.hasSnap = false;
+        }
+
+        function updateMirrorGhost(pos) {
+            if (State.mirrorMode === 'X') {
+                mirrorGhostMesh.position.set(-pos.x, pos.y, pos.z);
+                mirrorGhostMesh.visible = true;
+            } else if (State.mirrorMode === 'Z') {
+                mirrorGhostMesh.position.set(pos.x, pos.y, -pos.z);
+                mirrorGhostMesh.visible = true;
+            } else {
+                mirrorGhostMesh.visible = false;
+            }
+        }
+
+        // --- AIR CURSOR & DWELL ENGINE ---
+        const cursorVis = document.getElementById('cursor-vis');
+        const ring = document.getElementById('loading-ring');
+        const ringCircle = ring.querySelector('circle');
+        const ringCirc = 28 * 2 * Math.PI;
+        ringCircle.style.strokeDasharray = `${ringCirc} ${ringCirc}`;
+
+        function setRingPct(pct, color = 'var(--primary)') {
+            if (pct <= 0) {
+                ring.style.display = 'none';
+                return;
+            }
+            ring.style.display = 'block';
+            ringCircle.style.stroke = color;
+            ringCircle.style.strokeDashoffset = ringCirc - (pct / 100) * ringCirc;
+        }
+
+        function checkUIHover(screenX, screenY, dt, triggerPinch) {
+            const clientX = screenX * window.innerWidth;
+            const clientY = screenY * window.innerHeight;
+
+            const elem = document.elementFromPoint(clientX, clientY);
+            const interactive = elem ? elem.closest('button, .swatch, .mode-tab, .tool-btn, .bar-btn, .template-card, .mat-btn, .top-action-btn') : null;
+
+            if (interactive) {
+                if (State.hoverBtn !== interactive) {
+                    State.hoverBtn = interactive;
+                    State.hoverTimer = 0;
+                    AudioSys.play('hover');
+                }
+                State.hoverTimer += dt;
+                const progress = Math.min(100, (State.hoverTimer / CFG.DWELL_TIME_MS) * 100);
+
+                ring.style.left = `${clientX}px`;
+                ring.style.top = `${clientY}px`;
+                setRingPct(progress, 'var(--primary)');
+
+                if (progress >= 100 || triggerPinch) {
+                    interactive.click();
+                    State.hoverTimer = 0;
+                    setRingPct(0);
+                }
+                return true;
+            }
+
+            State.hoverBtn = null;
+            State.hoverTimer = 0;
+            return false;
+        }
+
+        // --- HANDS MOTION PROCESSING ---
+        const skeletonCanvas = document.getElementById('skeleton-canvas');
+        const sCtx = skeletonCanvas.getContext('2d');
+
+        function resizeRenderer() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            skeletonCanvas.width = window.innerWidth;
+            skeletonCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeRenderer);
+        resizeRenderer();
+
+        function getDist3D(p1, p2) {
+            return Math.hypot(p1.x - p2.x, p1.y - p2.y, (p1.z || 0) - (p2.z || 0));
+        }
+
+        function isPinch(hand) {
+            return getDist3D(hand[4], hand[8]) < CFG.PINCH_THRESHOLD;
+        }
+
+        function getPinchProgress(hand) {
+            const d = getDist3D(hand[4], hand[8]);
+            const norm = (d - CFG.PINCH_THRESHOLD) / (CFG.PINCH_RELEASE - CFG.PINCH_THRESHOLD);
+            return Math.max(0, Math.min(1, 1 - norm));
+        }
+
+        function isFist(hand) {
+            const wrist = hand[0];
+            const tips = [hand[8], hand[12], hand[16], hand[20]];
+            let sum = 0;
+            tips.forEach(t => sum += getDist3D(t, wrist));
+            return (sum / 4) < CFG.FIST_THRESHOLD;
+        }
+
+        const HAND_BONES = [
+            [0, 1], [1, 2], [2, 3], [3, 4],
+            [0, 5], [5, 6], [6, 7], [7, 8],
+            [5, 9], [9, 10], [10, 11], [11, 12],
+            [9, 13], [13, 14], [14, 15], [15, 16],
+            [13, 17], [17, 18], [18, 19], [19, 20],
+            [0, 17]
+        ];
+
+        function drawSkeleton(landmarks, isPrimary, isPinching) {
+            if (!State.showSkeleton) return;
+            const w = skeletonCanvas.width;
+            const h = skeletonCanvas.height;
+
+            sCtx.lineWidth = 2.5;
+            sCtx.strokeStyle = isPrimary ? (isPinching ? 'rgba(51, 255, 119, 0.75)' : 'rgba(0, 243, 255, 0.55)') : 'rgba(188, 19, 254, 0.4)';
+
+            HAND_BONES.forEach(([i, j]) => {
+                sCtx.beginPath();
+                sCtx.moveTo(landmarks[i].x * w, landmarks[i].y * h);
+                sCtx.lineTo(landmarks[j].x * w, landmarks[j].y * h);
+                sCtx.stroke();
+            });
+
+            landmarks.forEach((pt, idx) => {
+                sCtx.beginPath();
+                sCtx.arc(pt.x * w, pt.y * h, idx === 8 || idx === 4 ? 5.5 : 3, 0, 2 * Math.PI);
+                sCtx.fillStyle = idx === 8 ? '#00f3ff' : (idx === 4 ? '#ffff00' : '#ffffff');
+                sCtx.fill();
+            });
+        }
+
+        const dotTracking = document.getElementById('dot-tracking');
+        const statTracking = document.getElementById('stat-tracking');
+
+        function processHandResults(dt, handsList) {
+            sCtx.clearRect(0, 0, skeletonCanvas.width, skeletonCanvas.height);
+
+            if (!handsList || handsList.length === 0) {
+                dotTracking.classList.remove('online');
+                statTracking.textContent = "No Hands";
+                cursorVis.style.display = 'none';
+                setRingPct(0);
+                controls.enabled = true;
+                return;
+            }
+
+            dotTracking.classList.add('online');
+
+            let primaryHand = null;
+            let secondaryHand = null;
+
+            if (handsList.length === 1) {
+                primaryHand = handsList[0];
+                statTracking.textContent = "1-Hand";
+            } else {
+                statTracking.textContent = "2-Hands";
+                if (State.primaryHandType === 'left') {
+                    primaryHand = handsList[0];
+                    secondaryHand = handsList[1];
+                } else {
+                    primaryHand = handsList[handsList.length - 1];
+                    secondaryHand = handsList[0];
+                }
+            }
+
+            const primaryPinch = isPinch(primaryHand);
+            const primaryFist = isFist(primaryHand);
+            const pinchRatio = getPinchProgress(primaryHand);
+
+            drawSkeleton(primaryHand, true, primaryPinch);
+            if (secondaryHand) drawSkeleton(secondaryHand, false, isPinch(secondaryHand));
+
+            // Camera Orbit Gesture
+            if ((secondaryHand && isFist(secondaryHand)) || (!secondaryHand && primaryFist) || State.mode === 'ORBIT') {
+                const orbitHand = (secondaryHand && isFist(secondaryHand)) ? secondaryHand : primaryHand;
+                const sx = 1 - orbitHand[0].x;
+                const sy = orbitHand[0].y;
+
+                if (State.lastFistCoord.x !== -1) {
+                    const dx = sx - State.lastFistCoord.x;
+                    const dy = sy - State.lastFistCoord.y;
+                    camera.position.x += dx * 900;
+                    camera.position.y -= dy * 900;
+                    camera.lookAt(controls.target);
+                }
+                State.lastFistCoord.set(sx, sy);
+                cursorVis.style.display = 'none';
+                return;
+            } else {
+                State.lastFistCoord.set(-1, -1);
+            }
+
+            // Adaptive Cursor Smoothing
+            const targetX = 1 - primaryHand[8].x;
+            const targetY = primaryHand[8].y;
+            const cursorSpeed = Math.hypot(targetX - State.smoothCursor.x, targetY - State.smoothCursor.y);
+            const lerpFactor = cursorSpeed > 0.04 ? CFG.LERP_FAST : CFG.LERP_SLOW;
+
+            State.smoothCursor.x += (targetX - State.smoothCursor.x) * lerpFactor;
+            State.smoothCursor.y += (targetY - State.smoothCursor.y) * lerpFactor;
+
+            const screenX = State.smoothCursor.x;
+            const screenY = State.smoothCursor.y;
+
+            cursorVis.style.display = 'block';
+            cursorVis.style.left = `${screenX * 100}%`;
+            cursorVis.style.top = `${screenY * 100}%`;
+
+            if (primaryPinch) cursorVis.classList.add('pinching');
+            else cursorVis.classList.remove('pinching');
+
+            // Auto-dimming UI docks when aiming at center
+            const distFromEdgeX = Math.min(screenX, 1 - screenX);
+            const isNearDock = distFromEdgeX < 0.18 || screenY < 0.15 || screenY > 0.85;
+            document.querySelectorAll('.dock').forEach(d => d.classList.toggle('dimmed', !isNearDock));
+
+            // UI Hover & Dwell
+            const isHoveringUI = checkUIHover(screenX, screenY, dt, primaryPinch);
+            if (isHoveringUI) {
+                ghostMesh.visible = false;
+                mirrorGhostMesh.visible = false;
+                return;
+            }
+
+            // 3D Snapping
+            updateRaycastSnapping(screenX, screenY);
+
+            // Execute Actions
+            State.pinchCooldown -= dt;
+            const actionTrigger = primaryPinch || (secondaryHand && isPinch(secondaryHand));
+
+            if (actionTrigger) {
+                ring.style.left = `${screenX * window.innerWidth}px`;
+                ring.style.top = `${screenY * window.innerHeight}px`;
+                setRingPct(pinchRatio * 100, State.mode === 'ERASE' ? 'var(--danger)' : 'var(--primary)');
+
+                if (State.pinchCooldown <= 0 && State.hasSnap) {
+                    if (State.isPipetteActive && State.targetVoxel) {
+                        samplePipetteColor(State.targetVoxel);
+                    } else if (State.mode === 'BUILD') {
+                        placeVoxelCluster(State.snapCoord, State.color, true);
+                    } else if (State.mode === 'ERASE' && State.targetVoxel) {
+                        removeVoxelCluster(State.snapCoord, true);
+                    }
+                    State.pinchCooldown = CFG.PINCH_COOLDOWN_MS;
+                }
+            } else {
+                setRingPct(0);
+            }
+        }
+
+        // --- PIPETTE COLOR SAMPLER ---
+        function samplePipetteColor(voxelObj) {
+            const hex = voxelObj.userData.colorHex;
+            const style = voxelObj.userData.matStyle || 'solid';
+            State.color = hex;
+            State.materialStyle = style;
+            ghostMat.color.setHex(hex);
+
+            document.querySelectorAll('.mat-btn').forEach(b => b.classList.toggle('active', b.dataset.mat === style));
+            AudioSys.play('snap');
+            notify(`Sampled Color: #${hex.toString(16).padStart(6, '0').toUpperCase()}`, "🧪");
+
+            // Deactivate pipette after sample
+            State.isPipetteActive = false;
+            document.getElementById('tool-pipette').classList.remove('active');
+            cursorVis.classList.remove('pipette');
+        }
+
+        // --- MEDIAPIPE CAMERA INITIALIZATION ---
+        const videoElement = document.getElementById('input-video');
+        const pipVideo = document.getElementById('pip-video');
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        let lastT = performance.now();
+        hands.onResults((res) => {
+            const now = performance.now();
+            const dt = Math.min(100, now - lastT);
+            lastT = now;
+            processHandResults(dt, res.multiHandLandmarks || []);
+        });
+
+        let cameraStream = null;
+        async function startCamera() {
+            try {
+                cameraStream = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({ image: videoElement });
+                    },
+                    width: 1280,
+                    height: 720
+                });
+                await cameraStream.start();
+                pipVideo.srcObject = videoElement.srcObject;
+                pipVideo.play();
+                notify("Hand Tracking Online", "🟢");
+            } catch (err) {
+                console.warn("Camera init:", err);
+                notify("Camera offline. Mouse controls active!", "🖱️");
+            }
+        }
+
+        // --- MOUSE CONTROLS & SHORTCUTS ---
+        window.addEventListener('pointermove', (e) => {
+            if (!dotTracking.classList.contains('online')) {
+                const screenX = e.clientX / window.innerWidth;
+                const screenY = e.clientY / window.innerHeight;
+                updateRaycastSnapping(screenX, screenY);
+            }
+        });
+
+        window.addEventListener('pointerdown', (e) => {
+            if (e.button === 0 && e.target.closest('#canvas-layer') && State.hasSnap) {
+                if (State.isPipetteActive && State.targetVoxel) {
+                    samplePipetteColor(State.targetVoxel);
+                } else if (State.mode === 'BUILD') {
+                    placeVoxelCluster(State.snapCoord, State.color, true);
+                } else if (State.mode === 'ERASE' && State.targetVoxel) {
+                    removeVoxelCluster(State.snapCoord, true);
+                }
+            }
+        });
+
+        window.addEventListener('keydown', (e) => {
+            const k = e.key.toLowerCase();
+            if (k === 'b') setMode('BUILD');
+            else if (k === 'e') setMode('ERASE');
+            else if (k === 'o') setMode('ORBIT');
+            else if (k === 'm') toggleMirrorMode();
+            else if (k === 't') toggleTurntable();
+            else if (k === 'i') togglePipette();
+            else if (k === 'z' && (e.ctrlKey || e.metaKey)) executeUndo();
+            else if (k === 'z') executeUndo();
+            else if (k === 'y' && (e.ctrlKey || e.metaKey)) executeRedo();
+            else if (k === 'y') executeRedo();
+            else if (k === 'c' || e.key === 'Delete') openClearModal();
+            else if (e.key === 'Escape') {
+                closeClearModal();
+                templatesModal.style.display = 'none';
+            }
+            else if (k === 'h') toggleSkeleton();
+            else if (k >= '1' && k <= '9') {
+                const swatches = document.querySelectorAll('.swatch');
+                const idx = parseInt(k) - 1;
+                if (swatches[idx]) swatches[idx].click();
+            }
+        });
+
+        // --- MODE TOGGLING ---
+        const tabConstruct = document.getElementById('tab-construct');
+        const tabDestroy = document.getElementById('tab-destroy');
+        const tabOrbit = document.getElementById('tab-orbit');
+
+        function setMode(newMode) {
+            State.mode = newMode;
+            tabConstruct.classList.toggle('active', newMode === 'BUILD');
+            tabDestroy.classList.toggle('active', newMode === 'ERASE');
+            tabOrbit.classList.toggle('active', newMode === 'ORBIT');
+
+            cursorVis.classList.toggle('erase', newMode === 'ERASE');
+            ghostMat.color.setHex(newMode === 'ERASE' ? 0xff3344 : State.color);
+            controls.mouseButtons.LEFT = newMode === 'ORBIT' ? THREE.MOUSE.ROTATE : THREE.MOUSE.NONE;
+
+            AudioSys.play('switch');
+            notify(`Mode: ${newMode}`);
+        }
+
+        tabConstruct.onclick = () => setMode('BUILD');
+        tabDestroy.onclick = () => setMode('ERASE');
+        tabOrbit.onclick = () => setMode('ORBIT');
+
+        // --- SYMMETRY / MIRROR MODE ---
+        const btnMirror = document.getElementById('btn-mirror');
+        const mirrorText = document.getElementById('mirror-text');
+        function toggleMirrorMode() {
+            if (State.mirrorMode === 'OFF') {
+                State.mirrorMode = 'X';
+                mirrorPlaneMesh.rotation.y = Math.PI / 2;
+                mirrorPlaneMesh.visible = true;
+            } else if (State.mirrorMode === 'X') {
+                State.mirrorMode = 'Z';
+                mirrorPlaneMesh.rotation.y = 0;
+                mirrorPlaneMesh.visible = true;
+            } else {
+                State.mirrorMode = 'OFF';
+                mirrorPlaneMesh.visible = false;
+                mirrorGhostMesh.visible = false;
+            }
+            mirrorText.textContent = `Mirror: ${State.mirrorMode}`;
+            btnMirror.classList.toggle('active', State.mirrorMode !== 'OFF');
+            AudioSys.play('switch');
+            notify(`Symmetry: ${State.mirrorMode}`, "🪞");
+        }
+        btnMirror.onclick = toggleMirrorMode;
+
+        // --- TURNTABLE PRESENTATION ---
+        const btnTurntable = document.getElementById('btn-turntable');
+        function toggleTurntable() {
+            State.isTurntable = !State.isTurntable;
+            btnTurntable.classList.toggle('active', State.isTurntable);
+            AudioSys.play('switch');
+            notify(State.isTurntable ? "Turntable Active" : "Turntable Stopped", "🔄");
+        }
+        btnTurntable.onclick = toggleTurntable;
+
+        // --- COLOR PIPETTE TOOL ---
+        const toolPipette = document.getElementById('tool-pipette');
+        function togglePipette() {
+            State.isPipetteActive = !State.isPipetteActive;
+            toolPipette.classList.toggle('active', State.isPipetteActive);
+            cursorVis.classList.toggle('pipette', State.isPipetteActive);
+            AudioSys.play('switch');
+            notify(State.isPipetteActive ? "Pipette: Aim at block to sample" : "Pipette Off", "🧪");
+        }
+        toolPipette.onclick = togglePipette;
+
+        // --- MATERIAL SHADER BUTTONS ---
+        document.querySelectorAll('.mat-btn').forEach(btn => {
+            btn.onclick = () => {
+                document.querySelectorAll('.mat-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                State.materialStyle = btn.dataset.mat;
+                AudioSys.play('switch');
+                notify(`Material: ${btn.title}`, "✨");
+            };
+        });
+
+        // --- ATMOSPHERE THEMES ---
+        const THEMES = [
+            { name: "Cyberpunk", bg: "radial-gradient(circle at 50% 50%, #08182b 0%, #030810 70%, #010307 100%)", amb: 0xffffff, sun: 0xffffff, fill: 0x00f3ff, icon: "🌃" },
+            { name: "Sunset Gold", bg: "radial-gradient(circle at 50% 50%, #2b1308 0%, #150604 70%, #080203 100%)", amb: 0xffeedd, sun: 0xffaa44, fill: 0xbc13fe, icon: "🌅" },
+            { name: "Deep Void", bg: "radial-gradient(circle at 50% 50%, #050a12 0%, #020408 80%, #000000 100%)", amb: 0x99aacc, sun: 0x00f3ff, fill: 0xff0077, icon: "🌌" },
+            { name: "Clean Studio", bg: "radial-gradient(circle at 50% 50%, #1e2838 0%, #0e1522 70%, #070b12 100%)", amb: 0xffffff, sun: 0xffffff, fill: 0xffffff, icon: "💡" }
+        ];
+
+        const btnEnvTheme = document.getElementById('btn-env-theme');
+        const themeIcon = document.getElementById('theme-icon');
+        btnEnvTheme.onclick = () => {
+            State.themeIndex = (State.themeIndex + 1) % THEMES.length;
+            const t = THEMES[State.themeIndex];
+            document.getElementById('bg-canvas').style.background = t.bg;
+            ambientLight.color.setHex(t.amb);
+            sunLight.color.setHex(t.sun);
+            fillLight.color.setHex(t.fill);
+            themeIcon.textContent = t.icon;
+            btnEnvTheme.innerHTML = `<span id="theme-icon">${t.icon}</span> ${t.name}`;
+            AudioSys.play('switch');
+            notify(`Atmosphere: ${t.name}`, t.icon);
+        };
+
+        // --- UI DOCK ACTIONS ---
+        document.getElementById('tool-undo').onclick = () => executeUndo();
+        document.getElementById('tool-redo').onclick = () => executeRedo();
+        document.getElementById('tool-clear').onclick = () => openClearModal();
+        document.getElementById('btn-clear-canvas').onclick = () => openClearModal();
+        document.getElementById('btn-confirm-clear').onclick = () => executeClearCanvas();
+        document.getElementById('btn-cancel-clear').onclick = () => closeClearModal();
+        document.getElementById('btn-close-clear').onclick = () => closeClearModal();
+
+        // Brush Size Toggle (1x1 -> 2x2 -> 3x3)
+        const toolBrush = document.getElementById('tool-brush');
+        const brushBadge = document.getElementById('brush-badge');
+        toolBrush.onclick = () => {
+            State.brushSize = State.brushSize >= 3 ? 1 : State.brushSize + 1;
+            brushBadge.textContent = `${State.brushSize}x`;
+            toolBrush.setAttribute('data-tip', `Brush Size: ${State.brushSize}x${State.brushSize}`);
+            AudioSys.play('switch');
+            notify(`Brush: ${State.brushSize}x${State.brushSize}`, "🖌️");
+        };
+
+        // Grid Toggle
+        const toolGrid = document.getElementById('tool-grid');
+        toolGrid.onclick = () => {
+            gridHelper.visible = !gridHelper.visible;
+            toolGrid.classList.toggle('active', gridHelper.visible);
+            AudioSys.play('switch');
+            notify(gridHelper.visible ? "Grid ON" : "Grid OFF", "▦");
+        };
+
+        // Studio Void Mode vs AR Camera Mode
+        const btnEnvMode = document.getElementById('btn-env-mode');
+        const envIcon = document.getElementById('env-icon');
+        const envText = document.getElementById('env-text');
+        btnEnvMode.onclick = () => {
+            State.isStudioMode = !State.isStudioMode;
+            document.body.classList.toggle('studio-mode', State.isStudioMode);
+            envIcon.textContent = State.isStudioMode ? "📷" : "🌌";
+            envText.textContent = State.isStudioMode ? "AR Mode" : "Studio Mode";
+            AudioSys.play('switch');
+            notify(State.isStudioMode ? "Studio Void Active" : "AR Camera Active");
+        };
+
+        // Skeleton Toggle
+        const btnSkeleton = document.getElementById('btn-skeleton');
+        function toggleSkeleton() {
+            State.showSkeleton = !State.showSkeleton;
+            btnSkeleton.classList.toggle('active', State.showSkeleton);
+            btnSkeleton.innerHTML = `<span>🦴</span> Skeleton: ${State.showSkeleton ? 'ON' : 'OFF'}`;
+            AudioSys.play('switch');
+        }
+        btnSkeleton.onclick = toggleSkeleton;
+
+        // Hand Swap Toggle
+        const btnHandSwap = document.getElementById('btn-hand-swap');
+        btnHandSwap.onclick = () => {
+            if (State.primaryHandType === 'auto') State.primaryHandType = 'left';
+            else if (State.primaryHandType === 'left') State.primaryHandType = 'right';
+            else State.primaryHandType = 'auto';
+            btnHandSwap.innerHTML = `<span>✋</span> Hand: ${State.primaryHandType.toUpperCase()}`;
+            AudioSys.play('switch');
+            notify(`Primary Hand: ${State.primaryHandType}`);
+        };
+
+        // Reset Camera
+        document.getElementById('btn-reset-cam').onclick = () => {
+            camera.position.set(0, 360, 580);
+            controls.target.set(0, 40, 0);
+            controls.update();
+            AudioSys.play('switch');
+            notify("Camera Reset", "🎯");
+        };
+
+        // Save / Load / Export
+        document.getElementById('btn-save').onclick = () => saveProjectJSON();
+        document.getElementById('btn-export-obj').onclick = () => exportOBJ();
+        document.getElementById('btn-screenshot').onclick = () => takeScreenshot();
+
+        const fileInput = document.getElementById('file-input');
+        document.getElementById('btn-load').onclick = () => fileInput.click();
+        fileInput.onchange = (e) => {
+            if (e.target.files.length) loadProjectJSON(e.target.files[0]);
+        };
+
+        // Audio Mute Toggle
+        const btnAudio = document.getElementById('btn-audio');
+        btnAudio.onclick = () => {
+            AudioSys.muted = !AudioSys.muted;
+            document.getElementById('audio-icon').textContent = AudioSys.muted ? '🔇' : '🔊';
+            notify(AudioSys.muted ? "Audio Muted" : "Audio Enabled");
+        };
+
+        // Templates Modal
+        const templatesModal = document.getElementById('templates-modal');
+        document.getElementById('tool-templates').onclick = () => {
+            templatesModal.style.display = 'flex';
+            AudioSys.play('switch');
+        };
+        document.getElementById('btn-close-templates').onclick = () => { templatesModal.style.display = 'none'; };
+        document.getElementById('btn-cancel-templates').onclick = () => { templatesModal.style.display = 'none'; };
+
+        document.querySelectorAll('.template-card').forEach(card => {
+            card.onclick = () => {
+                const tId = card.dataset.template;
+                spawnTemplate(tId);
+                templatesModal.style.display = 'none';
+            };
+        });
+
+        // Help Modal
+        document.getElementById('btn-help').onclick = () => {
+            document.getElementById('tutorial-overlay').style.display = 'flex';
+        };
+
+        // Color Swatches
+        document.querySelectorAll('.swatch').forEach(sw => {
+            sw.onclick = () => {
+                document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+                sw.classList.add('active');
+                State.color = parseInt(sw.dataset.col);
+                if (State.mode === 'BUILD') ghostMat.color.setHex(State.color);
+                AudioSys.play('switch');
+            };
+        });
+
+        // Custom Color Picker
+        const colorPicker = document.getElementById('color-picker-input');
+        colorPicker.oninput = (e) => {
+            const hex = parseInt(e.target.value.replace('#', '0x'));
+            State.color = hex;
+            document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+            if (State.mode === 'BUILD') ghostMat.color.setHex(State.color);
+        };
+
+        // Tutorial Close
+        document.getElementById('btn-init').onclick = () => {
+            const overlay = document.getElementById('tutorial-overlay');
+            overlay.style.opacity = '0';
+            setTimeout(() => overlay.style.display = 'none', 350);
+            AudioSys.init();
+            startCamera();
+        };
+
+        // --- RENDER LOOP & FPS MONITOR ---
+        let frameCount = 0;
+        let lastFpsTime = performance.now();
+        const statFps = document.getElementById('stat-fps');
+
+        function renderLoop() {
+            requestAnimationFrame(renderLoop);
+
+            // Turntable Auto-Rotation
+            if (State.isTurntable) {
+                const speed = 0.006;
+                const dist = Math.hypot(camera.position.x, camera.position.z);
+                const angle = Math.atan2(camera.position.z, camera.position.x) + speed;
+                camera.position.x = Math.cos(angle) * dist;
+                camera.position.z = Math.sin(angle) * dist;
+                camera.lookAt(controls.target);
+            }
+
+            controls.update();
+
+            // Particle Updates
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.position.add(p.userData.vel);
+                p.userData.vel.y -= 0.35;
+                p.userData.life -= 0.038;
+                p.scale.setScalar(Math.max(0.01, p.userData.life));
+                if (p.userData.life <= 0) {
+                    scene.remove(p);
+                    p.material.dispose();
+                    particles.splice(i, 1);
+                }
+            }
+
+            // Ghost pulse animation
+            ghostMat.opacity = 0.5 + Math.sin(performance.now() * 0.006) * 0.15;
+            mirrorPlaneMesh.material.opacity = 0.12 + Math.sin(performance.now() * 0.004) * 0.04;
+
+            renderer.render(scene, camera);
+
+            // FPS Counter
+            frameCount++;
+            const now = performance.now();
+            if (now - lastFpsTime >= 1000) {
+                statFps.textContent = `${frameCount} FPS`;
+                frameCount = 0;
+                lastFpsTime = now;
+            }
+        }
+        renderLoop();
+
+        // Place starter center block
+        placeSingleVoxel(new THREE.Vector3(0, CFG.GRID / 2, 0), State.color, State.materialStyle);
+        updateVoxelMetrics();
+    </script>
+</body>
+
+</html>
